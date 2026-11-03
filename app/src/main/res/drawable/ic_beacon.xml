@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 문 + 전파 모양 -->
+    <path
+        android:fillColor="#FF2E7D32"
+        android:pathData="M5,3h9v18H5z M11.5,11.5a1,1 0,1 0,0.01 0z" />
+    <path
+        android:fillColor="#FF2E7D32"
+        android:pathData="M16.5,8.5l1,-1a6,6 0,0 1,0 9l-1,-1a4.6,4.6 0,0 0,0 -7z M18.6,6.4l1,-1a9,9 0,0 1,0 13.2l-1,-1a7.6,7.6 0,0 0,0 -11.2z" />
+</vector>
