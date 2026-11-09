@@ -18,7 +18,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 
 /**
  * iBeacon 신호만 계속 내보내는 포그라운드 서비스.
@@ -30,6 +32,10 @@ class BeaconService : Service() {
         private const val CHANNEL_ID = "beacon"
         private const val NOTIF_ID = 1
         const val ACTION_RESTART = "com.home.doorbeacon.RESTART"
+
+        // 슬롯 경쟁 등 일시적 실패 시 자동 재시도 간격 (점점 늘리되 상한을 둠)
+        private const val RETRY_START_MS = 10_000L
+        private const val RETRY_MAX_MS = 120_000L
 
         fun start(ctx: Context) {
             ctx.startForegroundService(Intent(ctx, BeaconService::class.java))
@@ -52,30 +58,48 @@ class BeaconService : Service() {
     private var advertising = false
     private var foreground = false
 
+    private val handler = Handler(Looper.getMainLooper())
+    private var retryDelayMs = RETRY_START_MS
+    private val retryRunnable = Runnable { startAdvertising() }
+
     private val callback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
             advertising = true
+            retryDelayMs = RETRY_START_MS
+            cancelRetry()
             setStatus("신호 보내는 중")
         }
 
         override fun onStartFailure(errorCode: Int) {
             advertising = false
-            val reason = when (errorCode) {
-                ADVERTISE_FAILED_DATA_TOO_LARGE -> "데이터 크기 오류"
-                ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> "다른 앱이 광고 슬롯 사용 중"
-                ADVERTISE_FAILED_ALREADY_STARTED -> "이미 실행 중"
-                ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> "이 폰은 BLE 광고 미지원"
-                else -> "내부 오류"
+            when (errorCode) {
+                // 이미 광고 중이면 성공과 같게 취급
+                ADVERTISE_FAILED_ALREADY_STARTED -> {
+                    advertising = true
+                    retryDelayMs = RETRY_START_MS
+                    cancelRetry()
+                    setStatus("신호 보내는 중")
+                }
+                // 일시적 실패: 다른 앱이 슬롯을 놓으면 복구되므로 조용히 재시도
+                ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> scheduleRetry()
+                // 영구적 실패: 재시도해도 소용없음
+                ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> setStatus("이 폰은 BLE 광고 미지원")
+                ADVERTISE_FAILED_DATA_TOO_LARGE -> setStatus("설정 오류 (데이터 크기)")
+                // 그 밖의 내부 오류도 일시적일 수 있어 재시도
+                else -> scheduleRetry()
             }
-            setStatus("시작 실패: $reason")
         }
     }
 
     private val btReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)) {
-                BluetoothAdapter.STATE_ON -> startAdvertising()
+                BluetoothAdapter.STATE_ON -> {
+                    retryDelayMs = RETRY_START_MS
+                    startAdvertising()
+                }
                 BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_OFF -> {
+                    cancelRetry()
                     advertising = false
                     advertiser = null
                     setStatus("블루투스 꺼짐 (켜지면 자동 재시작)")
@@ -122,6 +146,7 @@ class BeaconService : Service() {
     }
 
     override fun onDestroy() {
+        cancelRetry()
         stopAdvertising()
         try {
             unregisterReceiver(btReceiver)
@@ -129,6 +154,19 @@ class BeaconService : Service() {
         }
         status = "꺼짐"
         super.onDestroy()
+    }
+
+    /** 일시적 실패 시 조용히 재시도를 예약한다. 알림은 겁주지 않는 한 줄로 유지. */
+    private fun scheduleRetry() {
+        cancelRetry()
+        val waitSec = (retryDelayMs / 1000).toInt()
+        setStatus("신호 자리 양보 중 — 약 ${waitSec}초 뒤 자동 재시도")
+        handler.postDelayed(retryRunnable, retryDelayMs)
+        retryDelayMs = (retryDelayMs * 2).coerceAtMost(RETRY_MAX_MS)
+    }
+
+    private fun cancelRetry() {
+        handler.removeCallbacks(retryRunnable)
     }
 
     @SuppressLint("MissingPermission")
@@ -169,6 +207,7 @@ class BeaconService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun stopAdvertising() {
+        cancelRetry()
         try {
             advertiser?.stopAdvertising(callback)
         } catch (_: Exception) {
