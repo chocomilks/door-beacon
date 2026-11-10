@@ -1,0 +1,49 @@
+name: Build ESP32 Door Mouse
+
+on:
+  push:
+    branches: [esp32-door-mouse]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO + esptool
+        run: pip install platformio esptool
+
+      - name: Build firmware
+        run: pio run -d esp32-door-mouse
+
+      - name: Merge into single flashable .bin (@ 0x0)
+        run: |
+          cd esp32-door-mouse
+          B=.pio/build/esp32dev
+          python -m esptool --chip esp32 merge_bin \
+            -o door-mouse-merged.bin \
+            --flash_mode dio --flash_freq 40m --flash_size 4MB \
+            0x1000 "$B/bootloader.bin" \
+            0x8000 "$B/partitions.bin" \
+            0x10000 "$B/firmware.bin"
+          ls -la door-mouse-merged.bin
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mouse-v1.0.${{ github.run_number }}
+          name: Door Mouse 펌웨어 v1.0.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          files: esp32-door-mouse/door-mouse-merged.bin
+          make_latest: "false"
+          body: |
+            ESP32(WROOM) BLE 마우스 — 현관 재연결 시간 측정용 테스트 펌웨어.
+            웹 플래셔에서 door-mouse-merged.bin 을 오프셋 0x0 에 구우세요.
