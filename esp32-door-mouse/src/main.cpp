@@ -17,6 +17,7 @@
  *   - 10초 이상/들쭉날쭉 -> 문 트리거엔 무리 (집/외출 신호로만 활용 고려)
  */
 
+#include <Arduino.h>
 #include <BleMouse.h>
 
 // 광고 이름 "Door Mouse" — 폰 블루투스 목록에 이 이름으로 뜬다
