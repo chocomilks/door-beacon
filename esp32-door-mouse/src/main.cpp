@@ -25,7 +25,10 @@
 #include <Preferences.h>
 #include <NimBLEDevice.h>
 #include <NimBLEHIDDevice.h>
-#include <host/ble_gap.h>   // ble_gap_conn_rssi()
+
+// NimBLE 호스트 함수(라이브러리에 포함됨)를 직접 선언 — 연결 링크 RSSI 읽기.
+// (host/ble_gap.h 헤더 경로가 스케치에서 안 잡혀서 프로토타입만 선언)
+extern "C" int ble_gap_conn_rssi(uint16_t conn_handle, int8_t *out_rssi);
 
 // ---------------- 설정/전역 ----------------
 Preferences prefs;
