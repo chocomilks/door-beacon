@@ -48,7 +48,11 @@ bool          everDisconnected = false;
 unsigned long lastConnectMs  = 0;
 unsigned long lastDisconnectMs = 0;
 long          awaySeconds = -1;   // 직전에 끊겨 있던 시간(초). 첫 연결은 -1
-int           curRssi = 0;
+int           curRssi = 0;        // 생(raw) RSSI
+float         emaRssi = 0;        // 평활(EMA) RSSI — 스파이크 억제
+bool          emaInit = false;
+unsigned long lastRssiMs = 0;
+static const float EMA_ALPHA = 0.3f;  // 0.2초 샘플 * alpha0.3 ≈ 시정수 0.6초
 
 // ---------------- HID 마우스 리포트 맵 ----------------
 static const uint8_t MOUSE_REPORT_MAP[] = {
@@ -61,11 +65,13 @@ static const uint8_t MOUSE_REPORT_MAP[] = {
 
 // ---------------- MQTT 발행 ----------------
 void publishState() {
-  char buf[128];
+  char buf[160];
+  int rssiSmooth = emaInit ? (int)lroundf(emaRssi) : curRssi;
   snprintf(buf, sizeof(buf),
-    "{\"connected\":%s,\"rssi\":%d,\"away_s\":%ld}",
+    "{\"connected\":%s,\"rssi\":%d,\"rssi_raw\":%d,\"away_s\":%ld}",
     bleConnected ? "true" : "false",
-    bleConnected ? curRssi : 0,
+    bleConnected ? rssiSmooth : 0,   // rssi = 평활값(자동화가 사용)
+    bleConnected ? curRssi : 0,      // rssi_raw = 생값(참고/캘리브레이션)
     awaySeconds);
   if (mqtt.connected()) mqtt.publish(ST_TOPIC, buf, true);
   Serial.println(buf);
@@ -100,6 +106,7 @@ class SrvCB : public NimBLEServerCallbacks {
     bleConnected = false;
     lastDisconnectMs = millis();
     everDisconnected = true;
+    emaInit = false;              // 다음 귀가 때 평활 새로 시작
     stateDirty = true;
     Serial.println(">>> [끊김]");
     NimBLEDevice::startAdvertising();  // 재연결 받기
@@ -198,10 +205,15 @@ void loop() {
     mqtt.loop();
   }
 
-  // 연결 중이면 링크 RSSI 갱신
-  if (bleConnected) {
+  // 연결 중이면 링크 RSSI를 0.2초마다 샘플 + EMA 평활
+  if (bleConnected && millis() - lastRssiMs > 200) {
+    lastRssiMs = millis();
     int8_t r = 0;
-    if (ble_gap_conn_rssi(connHandle, &r) == 0) curRssi = r;
+    if (ble_gap_conn_rssi(connHandle, &r) == 0) {
+      curRssi = r;
+      if (!emaInit) { emaRssi = r; emaInit = true; }
+      else          { emaRssi = EMA_ALPHA * r + (1.0f - EMA_ALPHA) * emaRssi; }
+    }
   }
 
   // 이벤트 발생 시 즉시, 아니면 1.5초마다 발행
